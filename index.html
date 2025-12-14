@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Theo Dõi Gậy Thông Minh - Giám Hộ</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; }
+        #map { flex-grow: 1; height: 100%; z-index: 1; }
+        #control-panel { padding: 10px; background: #f4f4f4; border-bottom: 1px solid #ddd; z-index: 2; }
+        #status-group { display: flex; justify-content: space-between; margin-top: 5px; }
+        .status-box { padding: 5px 10px; border-radius: 4px; font-size: 0.9em; }
+        #locationStatus { background-color: #e0f7fa; border: 1px solid #b2ebf2; }
+        #configStatus { background-color: #fff3e0; border: 1px solid #ffcc80; }
+        h3 { margin-top: 0; margin-bottom: 5px; }
+    </style>
+</head>
+<body>
+    <div id="control-panel">
+        <h3>📍 Theo Dõi & 📞 Cấu Hình Gậy</h3>
+        
+        <input type="hidden" id="apiUrlInput" value="https://script.google.com/macros/s/AKfycbzH6mWuPHVwuzNFQYTAxPxOJYDM_nIETJYs922MaM-EOtKN70yN9CezmsNtqo80jIAYrg/exec"> 
+        
+        <div style="margin-bottom: 10px;">
+            <label for="phoneInput">Số ĐT (ID Thiết Bị):</label>
+            <input type="text" id="phoneInput" value="+84976537914" readonly style="border: none; background: #eee;">
+            <button onclick="startTracking()">Bắt Đầu Theo Dõi</button>
+        </div>
+
+        <div style="border-top: 1px solid #ccc; padding-top: 10px;">
+            <label for="newPhoneInput">Cập nhật SĐT Khẩn cấp:</label>
+            <input type="text" id="newPhoneInput" placeholder="+84...">
+            <button onclick="updateEmergencyPhone()">Cập nhật SOS</button>
+            <span id="configStatus" class="status-box">Đang tải cấu hình...</span>
+        </div>
+        
+        <div id="status-group">
+            <span id="locationStatus" class="status-box">Vị trí: Đang chờ...</span>
+        </div>
+    </div>
+    
+    <div id="map"></div>
+
+    <script>
+        // Lấy URL từ input ẩn (THAY THẾ CHỖ NÀY)
+        const GOOGLE_SHEET_API_URL = document.getElementById('apiUrlInput').value;
+        const TRACKING_INTERVAL = 5000; // Cập nhật vị trí mỗi 5 giây
+
+        var map = L.map('map').setView([16.0, 108.0], 5); // Vị trí mặc định ở Việt Nam
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap'
+        }).addTo(map);
+
+        var userMarker = null;
+        var trackingTimer = null;
+        var trackedPhone = document.getElementById('phoneInput').value;
+
+        // --- HÀM 1: CẬP NHẬT VỊ TRÍ TRÊN BẢN ĐỒ ---
+        function updateMarker(lat, lng, timestamp) {
+            var newLatLng = new L.LatLng(lat, lng);
+            
+            if (userMarker === null) {
+                userMarker = L.marker(newLatLng).addTo(map);
+            } else {
+                userMarker.setLatLng(newLatLng);
+            }
+
+            const timeStr = new Date(timestamp).toLocaleTimeString('vi-VN');
+            const dateStr = new Date(timestamp).toLocaleDateString('vi-VN');
+            
+            userMarker.setPopupContent(`
+                <b>Vị trí Người dùng</b><br>
+                Cập nhật lúc: ${timeStr} ${dateStr}<br>
+                Tọa độ: ${lat}, ${lng}
+            `).openPopup();
+            
+            map.setView(newLatLng, 15);
+            document.getElementById('locationStatus').innerText = `Vị trí: Mới nhất @ ${timeStr}`;
+        }
+
+        // --- HÀM 2: LẤY VỊ TRÍ MỚI NHẤT TỪ SHEET (GET) ---
+        async function fetchLatestLocation() {
+            const apiUrl = `${GOOGLE_SHEET_API_URL}?action=getLatest`;
+            try {
+                const response = await fetch(apiUrl);
+                const result = await response.json();
+                
+                if (result.status === 'success' && result.data.lat && result.data.lng) {
+                    const { lat, lng, timestamp } = result.data;
+                    // Chỉ cập nhật nếu tọa độ mới khác tọa độ marker hiện tại
+                    if (!userMarker || userMarker.getLatLng().lat != lat || userMarker.getLatLng().lng != lng) {
+                        updateMarker(lat, lng, timestamp);
+                    }
+                } else {
+                    document.getElementById('locationStatus').innerText = 'Vị trí: Chưa có dữ liệu GPS.';
+                }
+            } catch (error) {
+                document.getElementById('locationStatus').innerText = 'Vị trí: LỖI KẾT NỐI API!';
+                console.error("Lỗi khi fetch vị trí:", error);
+            }
+        }
+
+        // --- HÀM 3: LẤY CẤU HÌNH SOS HIỆN TẠI (GET) ---
+        async function fetchConfig() {
+            const configStatusDiv = document.getElementById('configStatus');
+            const apiUrl = `${GOOGLE_SHEET_API_URL}?action=getConfig`;
+            try {
+                const response = await fetch(apiUrl);
+                const result = await response.json();
+                
+                if (result.status === 'success' && result.data.EMERGENCY_PHONE) {
+                    const phone = result.data.EMERGENCY_PHONE;
+                    configStatusDiv.innerText = `SĐT Khẩn cấp: ${phone}`;
+                    document.getElementById('newPhoneInput').value = phone; // Điền vào ô input
+                } else {
+                    configStatusDiv.innerText = 'SĐT Khẩn cấp: Lỗi tải cấu hình!';
+                }
+            } catch (error) {
+                configStatusDiv.innerText = 'SĐT Khẩn cấp: LỖI KẾT NỐI API!';
+                console.error("Lỗi khi fetch cấu hình:", error);
+            }
+        }
+
+
+        // --- HÀM 4: CẬP NHẬT SỐ SOS LÊN SHEET (POST) ---
+        async function updateEmergencyPhone() {
+            const newPhone = document.getElementById('newPhoneInput').value.trim();
+            const configStatusDiv = document.getElementById('configStatus');
+            
+            if (!newPhone || !newPhone.startsWith('+')) {
+                alert("Vui lòng nhập số điện thoại hợp lệ, bắt đầu bằng mã quốc gia (ví dụ: +84...).");
+                return;
+            }
+            
+            configStatusDiv.innerText = 'Đang gửi yêu cầu cập nhật...';
+
+            try {
+                const response = await fetch(GOOGLE_SHEET_API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        action: 'updateConfig',
+                        newPhone: newPhone
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    configStatusDiv.innerText = `Cập nhật thành công: ${newPhone}`;
+                } else {
+                    configStatusDiv.innerText = `Lỗi cập nhật: ${result.data}`;
+                    console.error("Lỗi cập nhật cấu hình:", result);
+                }
+            } catch (error) {
+                configStatusDiv.innerText = 'Lỗi kết nối API Google Sheet.';
+            }
+        }
+        
+        // --- HÀM CHÍNH KHỞI ĐỘNG ---
+        function startTracking() {
+            if (trackingTimer) {
+                clearInterval(trackingTimer);
+            }
+            
+            // 1. Lấy vị trí lần đầu
+            fetchLatestLocation();
+            
+            // 2. Thiết lập hẹn giờ cập nhật vị trí
+            trackingTimer = setInterval(fetchLatestLocation, TRACKING_INTERVAL);
+            
+            // 3. Lấy cấu hình ban đầu
+            fetchConfig();
+        }
+
+        // Bắt đầu theo dõi khi trang tải xong
+        window.onload = startTracking; 
+
+    </script>
+</body>
+</html>
