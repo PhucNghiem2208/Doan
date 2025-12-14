@@ -2,6 +2,7 @@
 <html>
 <head>
     <title>Theo Dõi Gậy Thông Minh - Giám Hộ</title>
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -9,45 +10,57 @@
         body { font-family: Arial, sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; }
         #map { flex-grow: 1; height: 100%; z-index: 1; }
         #control-panel { padding: 10px; background: #f4f4f4; border-bottom: 1px solid #ddd; z-index: 2; }
-        #status-group { display: flex; justify-content: space-between; margin-top: 5px; }
+        #status-group { display: flex; justify-content: space-between; margin-top: 5px; flex-wrap: wrap; gap: 10px; }
         .status-box { padding: 5px 10px; border-radius: 4px; font-size: 0.9em; }
         #locationStatus { background-color: #e0f7fa; border: 1px solid #b2ebf2; }
         #configStatus { background-color: #fff3e0; border: 1px solid #ffcc80; }
         h3 { margin-top: 0; margin-bottom: 5px; }
+        .input-group { margin-bottom: 10px; }
+        .input-group label { display: inline-block; width: 150px; }
+        .input-group input { width: 250px; padding: 5px; }
+        .input-group button { padding: 5px 15px; margin-left: 5px; cursor: pointer; }
+        .success { background-color: #d4edda !important; border-color: #c3e6cb !important; color: #155724; }
+        .error { background-color: #f8d7da !important; border-color: #f5c6cb !important; color: #721c24; }
     </style>
 </head>
 <body>
     <div id="control-panel">
-        <h3>📍 Theo Dõi & 📞 Cấu Hình Gậy</h3>
+        <h3>🗺️ Theo Dõi & 📞 Cấu Hình Gậy</h3>
         
-        <input type="hidden" id="apiUrlInput" value="https://script.google.com/macros/s/AKfycbxQfPB3Mn0hlzBlFwf-_SMC58sDAMepYMZvkAO6YAWAvzK39oPyabbkhoQjYSslYlIh/exec"> 
+        <!-- URL Google Apps Script -->
+        <input type="hidden" id="apiUrlInput" value="https://script.google.com/macros/s/AKfycby01JlYgjRFUiAZSl37AIP71sqndN4OI917Vx-hg3jod6wgdtKcjDO4Bqwk4xePi8DN/exec">
         
-        <div style="margin-bottom: 10px;">
+        <!-- Tracking Control -->
+        <div class="input-group">
             <label for="phoneInput">Số ĐT (ID Thiết Bị):</label>
             <input type="text" id="phoneInput" value="+84976537914" readonly style="border: none; background: #eee;">
             <button onclick="startTracking()">Bắt Đầu Theo Dõi</button>
+            <button onclick="stopTracking()">Dừng</button>
         </div>
 
-        <div style="border-top: 1px solid #ccc; padding-top: 10px;">
+        <!-- Update Emergency Phone -->
+        <div class="input-group" style="border-top: 1px solid #ccc; padding-top: 10px;">
             <label for="newPhoneInput">Cập nhật SĐT Khẩn cấp:</label>
             <input type="text" id="newPhoneInput" placeholder="+84...">
             <button onclick="updateEmergencyPhone()">Cập nhật SOS</button>
-            <span id="configStatus" class="status-box">Đang tải cấu hình...</span>
         </div>
         
+        <!-- Status Display -->
         <div id="status-group">
             <span id="locationStatus" class="status-box">Vị trí: Đang chờ...</span>
+            <span id="configStatus" class="status-box">Đang tải cấu hình...</span>
         </div>
     </div>
     
     <div id="map"></div>
 
     <script>
-        // Lấy URL từ input ẩn (THAY THẾ CHỖ NÀY)
+        // Configuration
         const GOOGLE_SHEET_API_URL = document.getElementById('apiUrlInput').value;
-        const TRACKING_INTERVAL = 5000; // Cập nhật vị trí mỗi 5 giây
+        const TRACKING_INTERVAL = 5000; // 5 giây
 
-        var map = L.map('map').setView([16.0, 108.0], 5); // Vị trí mặc định ở Việt Nam
+        // Map initialization
+        var map = L.map('map').setView([16.0, 108.0], 5);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19,
             attribution: '© OpenStreetMap'
@@ -55,9 +68,8 @@
 
         var userMarker = null;
         var trackingTimer = null;
-        var trackedPhone = document.getElementById('phoneInput').value;
 
-        // --- HÀM 1: CẬP NHẬT VỊ TRÍ TRÊN BẢN ĐỒ ---
+        // --- HÀM CẬP NHẬT MARKER ---
         function updateMarker(lat, lng, timestamp) {
             var newLatLng = new L.LatLng(lat, lng);
             
@@ -78,107 +90,147 @@
             
             map.setView(newLatLng, 15);
             document.getElementById('locationStatus').innerText = `Vị trí: Mới nhất @ ${timeStr}`;
+            document.getElementById('locationStatus').className = 'status-box success';
         }
 
-        // --- HÀM 2: LẤY VỊ TRÍ MỚI NHẤT TỪ SHEET (GET) ---
+        // --- LẤY VỊ TRÍ MỚI NHẤT (GET only) ---
         async function fetchLatestLocation() {
-            const apiUrl = `${GOOGLE_SHEET_API_URL}?action=getLatest`;
+            const apiUrl = `${GOOGLE_SHEET_API_URL}?action=getLatest&_=${Date.now()}`;
+            const locationStatus = document.getElementById('locationStatus');
+            
             try {
                 const response = await fetch(apiUrl);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
                 const result = await response.json();
                 
                 if (result.status === 'success' && result.data.lat && result.data.lng) {
                     const { lat, lng, timestamp } = result.data;
-                    // Chỉ cập nhật nếu tọa độ mới khác tọa độ marker hiện tại
+                    
                     if (!userMarker || userMarker.getLatLng().lat != lat || userMarker.getLatLng().lng != lng) {
                         updateMarker(lat, lng, timestamp);
                     }
                 } else {
-                    document.getElementById('locationStatus').innerText = 'Vị trí: Chưa có dữ liệu GPS.';
+                    locationStatus.innerText = 'Vị trí: Chưa có dữ liệu GPS.';
+                    locationStatus.className = 'status-box';
                 }
             } catch (error) {
-                document.getElementById('locationStatus').innerText = 'Vị trí: LỖI KẾT NỐI API!';
-                console.error("Lỗi khi fetch vị trí:", error);
+                locationStatus.innerText = 'Vị trí: LỖI KẾT NỐI!';
+                locationStatus.className = 'status-box error';
+                console.error("Lỗi fetch vị trí:", error);
             }
         }
 
-        // --- HÀM 3: LẤY CẤU HÌNH SOS HIỆN TẠI (GET) ---
+        // --- LẤY CẤU HÌNH (GET only) ---
         async function fetchConfig() {
             const configStatusDiv = document.getElementById('configStatus');
-            const apiUrl = `${GOOGLE_SHEET_API_URL}?action=getConfig`;
+            const apiUrl = `${GOOGLE_SHEET_API_URL}?action=getConfig&_=${Date.now()}`;
+            
             try {
                 const response = await fetch(apiUrl);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
                 const result = await response.json();
                 
                 if (result.status === 'success' && result.data.EMERGENCY_PHONE) {
                     const phone = result.data.EMERGENCY_PHONE;
                     configStatusDiv.innerText = `SĐT Khẩn cấp: ${phone}`;
-                    document.getElementById('newPhoneInput').value = phone; // Điền vào ô input
+                    configStatusDiv.className = 'status-box success';
+                    document.getElementById('newPhoneInput').value = phone;
                 } else {
-                    configStatusDiv.innerText = 'SĐT Khẩn cấp: Lỗi tải cấu hình!';
+                    configStatusDiv.innerText = 'SĐT: Lỗi tải!';
+                    configStatusDiv.className = 'status-box error';
                 }
             } catch (error) {
-                configStatusDiv.innerText = 'SĐT Khẩn cấp: LỖI KẾT NỐI API!';
-                console.error("Lỗi khi fetch cấu hình:", error);
+                configStatusDiv.innerText = 'SĐT: LỖI KẾT NỐI!';
+                configStatusDiv.className = 'status-box error';
+                console.error("Lỗi fetch config:", error);
             }
         }
 
-
-        // --- HÀM 4: CẬP NHẬT SỐ SOS LÊN SHEET (POST) ---
+        // --- CẬP NHẬT SỐ KHẨN CẤP (GET only - tránh CORS) ---
         async function updateEmergencyPhone() {
             const newPhone = document.getElementById('newPhoneInput').value.trim();
             const configStatusDiv = document.getElementById('configStatus');
             
             if (!newPhone || !newPhone.startsWith('+')) {
-                alert("Vui lòng nhập số điện thoại hợp lệ, bắt đầu bằng mã quốc gia (ví dụ: +84...).");
+                alert("Vui lòng nhập số điện thoại hợp lệ, bắt đầu bằng + (ví dụ: +84...)");
                 return;
             }
             
-            configStatusDiv.innerText = 'Đang gửi yêu cầu cập nhật...';
+            configStatusDiv.innerText = 'Đang cập nhật...';
+            configStatusDiv.className = 'status-box';
 
             try {
-                const response = await fetch(GOOGLE_SHEET_API_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        action: 'updateConfig',
-                        newPhone: newPhone
-                    })
-                });
+                // SỬ DỤNG GET thay vì POST để tránh CORS
+                const apiUrl = `${GOOGLE_SHEET_API_URL}?action=updateConfig&newPhone=${encodeURIComponent(newPhone)}&_=${Date.now()}`;
+                
+                const response = await fetch(apiUrl);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
                 
                 const result = await response.json();
                 
                 if (result.status === 'success') {
-                    configStatusDiv.innerText = `Cập nhật thành công: ${newPhone}`;
+                    configStatusDiv.innerText = `✅ Cập nhật thành công: ${newPhone}`;
+                    configStatusDiv.className = 'status-box success';
+                    
+                    // Đợi 1 giây rồi verify
+                    setTimeout(() => {
+                        fetchConfig();
+                    }, 1000);
                 } else {
-                    configStatusDiv.innerText = `Lỗi cập nhật: ${result.data}`;
-                    console.error("Lỗi cập nhật cấu hình:", result);
+                    configStatusDiv.innerText = `❌ Lỗi: ${result.data}`;
+                    configStatusDiv.className = 'status-box error';
                 }
+                
             } catch (error) {
-                configStatusDiv.innerText = 'Lỗi kết nối API Google Sheet.';
+                configStatusDiv.innerText = '❌ Lỗi kết nối Google Sheet!';
+                configStatusDiv.className = 'status-box error';
+                console.error("Lỗi update phone:", error);
             }
         }
-        
-        // --- HÀM CHÍNH KHỞI ĐỘNG ---
+
+        // --- KHỞI ĐỘNG TRACKING ---
         function startTracking() {
             if (trackingTimer) {
                 clearInterval(trackingTimer);
             }
             
-            // 1. Lấy vị trí lần đầu
-            fetchLatestLocation();
+            console.log('Bắt đầu theo dõi...');
             
-            // 2. Thiết lập hẹn giờ cập nhật vị trí
+            // Lấy vị trí và config lần đầu
+            fetchLatestLocation();
+            fetchConfig();
+            
+            // Thiết lập hẹn giờ
             trackingTimer = setInterval(fetchLatestLocation, TRACKING_INTERVAL);
             
-            // 3. Lấy cấu hình ban đầu
-            fetchConfig();
+            alert('✅ Đã bắt đầu theo dõi!');
         }
 
-        // Bắt đầu theo dõi khi trang tải xong
-        window.onload = startTracking; 
+        function stopTracking() {
+            if (trackingTimer) {
+                clearInterval(trackingTimer);
+                trackingTimer = null;
+                console.log('Dừng theo dõi');
+                alert('⏸️ Đã dừng theo dõi!');
+            }
+        }
 
+        // Tự động bắt đầu khi load
+        window.onload = function() {
+            console.log('Page loaded, auto-starting...');
+            startTracking();
+        };
     </script>
 </body>
-
 </html>
